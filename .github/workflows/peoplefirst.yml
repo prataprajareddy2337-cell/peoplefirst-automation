@@ -2,26 +2,29 @@ name: PeopleFirst Auto Upload
 
 on:
   schedule:
-    - cron: "*/12 * * * *"  # runs every 12 minutes
-  workflow_dispatch:  # lets you run manually
+    - cron: "*/12 * * * *"   # every 12 minutes
+  workflow_dispatch:          # allows manual trigger
 
 jobs:
-  run-script:
+  run:
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install selenium webdriver-manager
 
-      - name: Run PeopleFirst uploader
-        run: |
-          python peoplefirst_uploader_v_4_7.py
+      - name: Run PeopleFirst Uploader
+        run: python peoplefirst_uploader_v_4_7.py
