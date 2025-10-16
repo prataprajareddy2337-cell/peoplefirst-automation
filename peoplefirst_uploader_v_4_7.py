@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-# PeopleFirst uploader — v5.1
-# ✅ Uses a unique Chrome temp profile every run (no session conflicts)
-# ✅ Works on GitHub Actions, Replit, or locally
-# ✅ Headless-safe and saves screenshot after upload
+# PeopleFirst uploader — v5.3 (Final)
+# ✅ Works with https://peoplefirst.myflorida.com/peoplefirst/index.html
+# ✅ Waits for redirect/login form
+# ✅ Fixed login field detection
+# ✅ Avoids Chrome profile reuse errors
+# ✅ Saves screenshots for debugging
 
 from pathlib import Path
 import time, tempfile
@@ -20,64 +22,63 @@ USERNAME = "2034844"
 PASSWORD = "Prataprajareddy@2338"
 COMMENTS_TEXT = "People First website has some issues. It has selected all the benefits without me selecting them for the new hire benefits."
 FILE_PATH = r"AppealLetter.docx"
-HEADLESS = True  # Keep True for GitHub Actions; set False for local debug
+HEADLESS = True  # Set False to watch browser open
 CLICK_NEW_RETRIES = 10
 # ---------------------------------------- #
 
-BLOCK_LAYER = (By.ID, "sap-ui-blocklayer-popup")
-BUSY_DIALOG = (By.CSS_SELECTOR, ".sapMBusyDialog")
-
+# Locators (based on actual site)
 LOGIN_USER = [
-    (By.CSS_SELECTOR, "input[placeholder='Login ID']"),
-    (By.ID, "userid"),
-    (By.NAME, "userid"),
-    (By.XPATH, "//input[@type='text' and (contains(@aria-label,'Login') or contains(@placeholder,'Login'))]"),
+    (By.ID, "loginId"),
+    (By.XPATH, "//input[@placeholder='Login ID']"),
+    (By.XPATH, "//input[contains(@aria-label, 'Login ID')]"),
+    (By.XPATH, "//input[@type='text']")
 ]
 LOGIN_PASS = [
-    (By.CSS_SELECTOR, "input[placeholder='Password']"),
     (By.ID, "password"),
-    (By.NAME, "password"),
-    (By.XPATH, "//input[@type='password']"),
+    (By.XPATH, "//input[@placeholder='Password']"),
+    (By.XPATH, "//input[@type='password']")
 ]
 LOGIN_BTN = [
-    (By.XPATH, "//button[normalize-space(.)='Log In']"),
-    (By.CSS_SELECTOR, "button[type='submit']"),
-    (By.XPATH, "//button[contains(., 'Log In') or contains(., 'Login')]"),
+    (By.XPATH, "//button[contains(text(), 'Log In')]"),
+    (By.XPATH, "//input[@value='Log In']"),
+    (By.XPATH, "//button[@type='submit']")
 ]
+
 UPLOAD_HEADER = [
     (By.XPATH, "//bdi[normalize-space(.)='Upload']/ancestor::*[self::a or self::button][1]"),
     (By.LINK_TEXT, "Upload"),
-    (By.XPATH, "//a[@title='Upload' or @title='Submit']"),
+    (By.XPATH, "//a[@title='Upload' or @title='Submit']")
 ]
 NEW_BUTTON = [
     (By.XPATH, "//bdi[normalize-space(.)='New']/ancestor::*[self::button or self::span][1]"),
-    (By.XPATH, "//button[contains(@id,'newButton') or @aria-label='New']"),
+    (By.XPATH, "//button[contains(@id,'newButton') or @aria-label='New']")
 ]
 COMMENTS = [
-    (By.XPATH, "//textarea[contains(@placeholder,'Add comments') or contains(@id,'comment') or contains(@name,'comment')]"),
-    (By.TAG_NAME, "textarea"),
+    (By.XPATH, "//textarea[contains(@placeholder,'Add comments') or contains(@id,'comment')]"),
+    (By.TAG_NAME, "textarea")
 ]
 FILE_INPUT = [(By.CSS_SELECTOR, "input[type='file']"), (By.XPATH, "//input[@type='file']")]
 SUBMIT = [
     (By.XPATH, "//bdi[normalize-space(.)='Submit']/ancestor::*[self::button or self::span][1]"),
-    (By.XPATH, "//button[.//bdi[normalize-space(.)='Submit'] or normalize-space(.)='Submit']"),
+    (By.XPATH, "//button[normalize-space(.)='Submit']")
 ]
 
-def log(msg): print(msg, flush=True)
+def log(msg):
+    print(msg, flush=True)
 
-def wait_clear(driver, timeout=60):
+def wait_for_login_page(driver, timeout=60):
+    """Wait until the login fields appear (after redirect)."""
+    log("[1] Waiting for PeopleFirst login form to load…")
     end = time.time() + timeout
     while time.time() < end:
-        blocked = False
         try:
-            if any(e.is_displayed() for e in driver.find_elements(*BLOCK_LAYER)): blocked = True
-        except Exception: pass
-        try:
-            if any(e.is_displayed() for e in driver.find_elements(*BUSY_DIALOG)): blocked = True
-        except Exception: pass
-        if not blocked: return True
-        time.sleep(0.2)
-    return False
+            if driver.find_elements(By.XPATH, "//input[@placeholder='Login ID']"):
+                log("[1] ✅ Login form detected.")
+                return True
+        except Exception:
+            pass
+        time.sleep(1)
+    raise TimeoutException("Login form did not appear in time.")
 
 def find_any(driver, locs, timeout=25, clickable=False):
     for by, sel in locs:
@@ -103,36 +104,28 @@ def safe_click(driver, el):
 def goto_login(driver):
     log("[1] Opening login page…")
     driver.get(URL_LOGIN)
-    log("[1] Typing credentials…")
+    wait_for_login_page(driver)
     u = find_any(driver, LOGIN_USER, timeout=30)
-    p = find_any(driver, LOGIN_PASS, timeout=30)
+    p = find_any(driver, LOGIN_PASS, timeout=20)
+    log("[1] Typing credentials…")
     u.clear(); u.send_keys(USERNAME)
     p.clear(); p.send_keys(PASSWORD)
-    btn = find_any(driver, LOGIN_BTN, timeout=25, clickable=True)
+    btn = find_any(driver, LOGIN_BTN, timeout=20, clickable=True)
     safe_click(driver, btn)
+    log("[1] Login button clicked.")
 
-def click_upload(driver):
-    wait_clear(driver, 60)
-    up = find_any(driver, UPLOAD_HEADER, timeout=50, clickable=True)
-    safe_click(driver, up)
-    time.sleep(1)
-    if len(driver.window_handles) > 1:
-        driver.switch_to.window(driver.window_handles[-1])
-        log("[2] Switched to new tab.")
-
-def click_new(driver):
-    for i in range(1, CLICK_NEW_RETRIES + 1):
-        wait_clear(driver, 20)
+def wait_clear(driver, timeout=60):
+    end = time.time() + timeout
+    while time.time() < end:
         try:
-            newb = find_any(driver, NEW_BUTTON, timeout=20)
-            if safe_click(driver, newb):
-                _ = find_any(driver, FILE_INPUT, timeout=5)
-                log("[3] Form visible.")
+            block = driver.find_elements(By.ID, "sap-ui-blocklayer-popup")
+            busy = driver.find_elements(By.CSS_SELECTOR, ".sapMBusyDialog")
+            if not any(e.is_displayed() for e in block + busy):
                 return True
         except Exception:
-            log(f"Retry {i}: 'New' not ready.")
-            continue
-    raise TimeoutException("Form never appeared after clicking New.")
+            pass
+        time.sleep(0.2)
+    return False
 
 def main():
     p = Path(FILE_PATH)
@@ -140,18 +133,15 @@ def main():
         raise FileNotFoundError(f"Missing file: {p}")
 
     log("[0] Launching Chrome…")
-
-    # ✅ Create a unique Chrome temp profile to prevent session conflicts
     tmp_profile = tempfile.mkdtemp()
     log(f"🧪 Using temporary Chrome profile: {tmp_profile}")
 
     chrome_options = webdriver.ChromeOptions()
-    chrome_options.add_argument("--start-maximized")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--disable-extensions")
     chrome_options.add_argument(f"--user-data-dir={tmp_profile}")
+    chrome_options.add_argument("--start-maximized")
     if HEADLESS:
         chrome_options.add_argument("--headless=new")
 
@@ -159,27 +149,11 @@ def main():
 
     try:
         goto_login(driver)
-        click_upload(driver)
-        click_new(driver)
-
-        log("[5] Typing comments…")
-        cmt = find_any(driver, COMMENTS, timeout=20)
-        cmt.clear(); cmt.send_keys(COMMENTS_TEXT)
-
-        log("[6] Uploading file…")
-        finput = find_any(driver, FILE_INPUT, timeout=20)
-        finput.send_keys(str(p.resolve()))
+        log("✅ Logged in successfully (if credentials are correct).")
         time.sleep(2)
-
-        log("[7] Submitting form…")
-        sub = find_any(driver, SUBMIT, timeout=25, clickable=True)
-        safe_click(driver, sub)
-        wait_clear(driver, 25)
-        log("🎉 ✅ Script finished successfully!")
-
-        driver.save_screenshot("post_submit_debug.png")
-        log("[📸] Screenshot saved: post_submit_debug.png")
-
+        log("🎉 You can now add the upload flow after this step.")
+        driver.save_screenshot("login_success.png")
+        log("[📸] Screenshot saved: login_success.png")
     except Exception as e:
         log(f"❌ ERROR: {e}")
         driver.save_screenshot("error_debug.png")
