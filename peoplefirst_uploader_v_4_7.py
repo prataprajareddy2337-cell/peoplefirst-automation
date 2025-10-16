@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-# PeopleFirst uploader — v5.4 (Stable)
+# PeopleFirst uploader — v5.5 (Stable for GitHub Actions)
 # ✅ Works with https://peoplefirst.myflorida.com/peoplefirst/index.html
+# ✅ Handles long redirect delays in headless mode
 # ✅ Waits up to 3 minutes for login form
-# ✅ Avoids Chrome session reuse error
-# ✅ Saves screenshots on error
-# ✅ Ready for local or GitHub Actions run
+# ✅ Dumps screenshot + HTML if login fails
+# ✅ Safe temporary Chrome profile each run
+# ✅ Compatible with both local and CI (GitHub Actions)
 
 from pathlib import Path
 import time, tempfile
@@ -22,8 +23,7 @@ USERNAME = "2034844"
 PASSWORD = "Prataprajareddy@2338"
 COMMENTS_TEXT = "People First website has some issues. It has selected all the benefits without me selecting them for the new hire benefits."
 FILE_PATH = r"AppealLetter.docx"
-HEADLESS = True  # Set False to view Chrome window
-CLICK_NEW_RETRIES = 10
+HEADLESS = True  # Set False to view Chrome window locally
 # ---------------------------------------- #
 
 # Locators
@@ -44,26 +44,7 @@ LOGIN_BTN = [
     (By.XPATH, "//button[@type='submit']")
 ]
 
-UPLOAD_HEADER = [
-    (By.XPATH, "//bdi[normalize-space(.)='Upload']/ancestor::*[self::a or self::button][1]"),
-    (By.LINK_TEXT, "Upload"),
-    (By.XPATH, "//a[@title='Upload' or @title='Submit']")
-]
-NEW_BUTTON = [
-    (By.XPATH, "//bdi[normalize-space(.)='New']/ancestor::*[self::button or self::span][1]"),
-    (By.XPATH, "//button[contains(@id,'newButton') or @aria-label='New']")
-]
-COMMENTS = [
-    (By.XPATH, "//textarea[contains(@placeholder,'Add comments') or contains(@id,'comment')]"),
-    (By.TAG_NAME, "textarea")
-]
-FILE_INPUT = [(By.CSS_SELECTOR, "input[type='file']"), (By.XPATH, "//input[@type='file']")]
-SUBMIT = [
-    (By.XPATH, "//bdi[normalize-space(.)='Submit']/ancestor::*[self::button or self::span][1]"),
-    (By.XPATH, "//button[normalize-space(.)='Submit']")
-]
-
-# Utility functions
+# --- Utilities ---
 def log(msg):
     print(msg, flush=True)
 
@@ -88,31 +69,39 @@ def safe_click(driver, el):
             time.sleep(0.2)
     return False
 
-# --- Main login wait ---
+# --- Wait for login ---
 def wait_for_login_page(driver, timeout=180):
-    """Wait up to 3 minutes for PeopleFirst login fields to appear."""
+    """Wait up to 3 minutes for login form using multiple strategies."""
     log(f"[1] Waiting for PeopleFirst login form to load… (timeout={timeout}s)")
     end_time = time.time() + timeout
     while time.time() < end_time:
         try:
-            for by, sel in LOGIN_USER:
-                elements = driver.find_elements(by, sel)
-                if elements and elements[0].is_displayed():
-                    log("[1] ✅ Login form detected.")
-                    return
+            # check for login keywords in HTML (since page is JS rendered)
+            html = driver.page_source.lower()
+            if any(kw in html for kw in ["login id", "password", "log in", "sign in"]):
+                # now check if field is visible
+                for by, sel in LOGIN_USER:
+                    els = driver.find_elements(by, sel)
+                    if els and els[0].is_displayed():
+                        log("[1] ✅ Login form detected.")
+                        return
         except Exception:
             pass
         time.sleep(1)
 
+    # If timeout -> save debug info
     driver.save_screenshot("error_debug.png")
+    with open("error_debug.html", "w", encoding="utf-8") as f:
+        f.write(driver.page_source)
     log("[📸] Saved error screenshot: error_debug.png")
+    log("[📄] Saved HTML source: error_debug.html")
     raise TimeoutException("Login form did not appear in time.")
 
-# --- Main process ---
+# --- Main login ---
 def goto_login(driver):
     log("[1] Opening login page…")
     driver.get(URL_LOGIN)
-    time.sleep(10)  # give redirect time
+    time.sleep(15)  # give enough time for SSO redirect
     wait_for_login_page(driver)
     log("[1] Typing credentials…")
     u = find_any(driver, LOGIN_USER, timeout=30)
@@ -140,6 +129,8 @@ def main():
     chrome_options.add_argument("--disable-extensions")
     chrome_options.add_argument(f"--user-data-dir={tmp_profile}")
     chrome_options.add_argument("--start-maximized")
+    chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     if HEADLESS:
         chrome_options.add_argument("--headless=new")
 
@@ -150,14 +141,14 @@ def main():
         log("✅ Logged in successfully (if credentials are correct).")
         driver.save_screenshot("login_success.png")
         log("[📸] Screenshot saved: login_success.png")
-
-        # TODO: Add upload flow after successful login.
         log("🎉 Login stage completed successfully.")
-
     except Exception as e:
         log(f"❌ ERROR: {e}")
         driver.save_screenshot("error_debug.png")
+        with open("error_debug.html", "w", encoding="utf-8") as f:
+            f.write(driver.page_source)
         log("[📸] Saved error screenshot: error_debug.png")
+        log("[📄] Saved HTML source: error_debug.html")
         raise
     finally:
         driver.quit()
