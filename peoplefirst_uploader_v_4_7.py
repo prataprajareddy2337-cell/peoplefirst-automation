@@ -1,157 +1,162 @@
-#!/usr/bin/env python3
-# PeopleFirst uploader — v5.5 (Stable for GitHub Actions)
-# ✅ Works with https://peoplefirst.myflorida.com/peoplefirst/index.html
-# ✅ Handles long redirect delays in headless mode
-# ✅ Waits up to 3 minutes for login form
-# ✅ Dumps screenshot + HTML if login fails
-# ✅ Safe temporary Chrome profile each run
-# ✅ Compatible with both local and CI (GitHub Actions)
-
+import time
+import tempfile
 from pathlib import Path
-import time, tempfile
 from selenium import webdriver
-from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
 
-# ---------------- CONFIG ---------------- #
-URL_LOGIN = "https://peoplefirst.myflorida.com/peoplefirst/index.html"
-USERNAME = "2034844"
-PASSWORD = "Prataprajareddy@2338"
-COMMENTS_TEXT = "People First website has some issues. It has selected all the benefits without me selecting them for the new hire benefits."
-FILE_PATH = r"AppealLetter.docx"
-HEADLESS = True  # Set False to view Chrome window locally
-# ---------------------------------------- #
+# Constants
+FILE_PATH = "appeal_letter.pdf"  # Change this to your file path
+COMMENTS_TEXT = "Uploading appeal letter as per request."
+HEADLESS = False
 
-# Locators
+# Selectors (update as needed)
 LOGIN_USER = [
-    (By.ID, "loginId"),
-    (By.XPATH, "//input[@placeholder='Login ID']"),
-    (By.XPATH, "//input[contains(@aria-label, 'Login ID')]"),
-    (By.XPATH, "//input[@type='text']")
+    (By.CSS_SELECTOR, "input[placeholder='Login ID']"),
+    (By.ID, "userid"),
+    (By.NAME, "userid"),
+    (By.XPATH, "//input[@type='text' and (contains(@aria-label,'Login') or contains(@placeholder,'Login'))]")
 ]
+
 LOGIN_PASS = [
     (By.ID, "password"),
-    (By.XPATH, "//input[@placeholder='Password']"),
+    (By.NAME, "password"),
+    (By.CSS_SELECTOR, "input[type='password']"),
     (By.XPATH, "//input[@type='password']")
 ]
-LOGIN_BTN = [
-    (By.XPATH, "//button[contains(text(), 'Log In')]"),
-    (By.XPATH, "//input[@value='Log In']"),
-    (By.XPATH, "//button[@type='submit']")
+
+COMMENTS = [
+    (By.NAME, "comments"),
+    (By.ID, "comments")
 ]
 
-# --- Utilities ---
-def log(msg):
-    print(msg, flush=True)
+ADD_ATTACH = [
+    (By.ID, "add_attachment"),
+    (By.XPATH, "//button[contains(text(),'Add Attachment')]")
+]
 
-def find_any(driver, locs, timeout=25, clickable=False):
-    for by, sel in locs:
+FILE_INPUT = [
+    (By.CSS_SELECTOR, "input[type='file']")
+]
+
+SUBMIT = [
+    (By.ID, "submit"),
+    (By.XPATH, "//button[contains(text(),'Submit')]")
+]
+
+# Logging helper
+def log(msg):
+    print(msg)
+
+# Element finder helper
+def find_any(driver, locators, timeout=30, clickable=False):
+    wait = WebDriverWait(driver, timeout)
+    for by, value in locators:
         try:
             if clickable:
-                WebDriverWait(driver, timeout).until(EC.element_to_be_clickable((by, sel)))
+                return wait.until(EC.element_to_be_clickable((by, value)))
             else:
-                WebDriverWait(driver, timeout).until(EC.presence_of_element_located((by, sel)))
-            return driver.find_element(by, sel)
+                return wait.until(EC.presence_of_element_located((by, value)))
         except Exception:
             continue
-    raise TimeoutException(f"No selector matched: {locs}")
+    raise TimeoutException(f"No selector matched: {locators}")
 
+# Safe click helper
 def safe_click(driver, el):
-    for _ in range(3):
-        try:
-            el.click(); return True
-        except Exception:
-            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
-            time.sleep(0.2)
-    return False
+    driver.execute_script("arguments[0].click();", el)
 
-# --- Wait for login ---
+# Load and wait for login
+
 def wait_for_login_page(driver, timeout=180):
-    """Wait up to 3 minutes for login form using multiple strategies."""
-    log(f"[1] Waiting for PeopleFirst login form to load… (timeout={timeout}s)")
-    end_time = time.time() + timeout
-    while time.time() < end_time:
-        try:
-            # check for login keywords in HTML (since page is JS rendered)
-            html = driver.page_source.lower()
-            if any(kw in html for kw in ["login id", "password", "log in", "sign in"]):
-                # now check if field is visible
-                for by, sel in LOGIN_USER:
-                    els = driver.find_elements(by, sel)
-                    if els and els[0].is_displayed():
-                        log("[1] ✅ Login form detected.")
-                        return
-        except Exception:
-            pass
-        time.sleep(1)
+    log(f"[1] Waiting for PeopleFirst login form to load... (timeout={timeout}s)")
+    try:
+        WebDriverWait(driver, timeout).until(
+            EC.presence_of_element_located((By.TAG_NAME, "form"))
+        )
+    except Exception:
+        Path("error_debug.html").write_text(driver.page_source)
+        driver.save_screenshot("error_debug.png")
+        raise TimeoutException("Login form did not appear in time.")
 
-    # If timeout -> save debug info
-    driver.save_screenshot("error_debug.png")
-    with open("error_debug.html", "w", encoding="utf-8") as f:
-        f.write(driver.page_source)
-    log("[📸] Saved error screenshot: error_debug.png")
-    log("[📄] Saved HTML source: error_debug.html")
-    raise TimeoutException("Login form did not appear in time.")
-
-# --- Main login ---
 def goto_login(driver):
-    log("[1] Opening login page…")
-    driver.get(URL_LOGIN)
-    time.sleep(15)  # give enough time for SSO redirect
+    log("[1] Opening login page...")
+    driver.get("https://peoplefirst.myflorida.com/peoplefirst/index.html")
     wait_for_login_page(driver)
     log("[1] Typing credentials…")
-    u = find_any(driver, LOGIN_USER, timeout=30)
-    p = find_any(driver, LOGIN_PASS, timeout=20)
-    u.clear(); u.send_keys(USERNAME)
-    p.clear(); p.send_keys(PASSWORD)
-    btn = find_any(driver, LOGIN_BTN, timeout=25, clickable=True)
-    safe_click(driver, btn)
-    log("[1] Login button clicked.")
+    u = find_any(driver, LOGIN_USER)
+    u.send_keys("YOUR_USERNAME")  # Replace with actual username
+    p = find_any(driver, LOGIN_PASS)
+    p.send_keys("YOUR_PASSWORD")  # Replace with actual password
+    p.submit()
 
-# --- MAIN ---
+def click_upload(driver):
+    pass  # TODO: Add logic for navigating to upload section
+
+def click_new(driver):
+    pass  # TODO: Add logic for clicking "New Document" or similar
+
+def force_select_appeal_letter(driver):
+    pass  # TODO: Logic to select document type as "Appeal Letter"
+
+# Main function
 def main():
     p = Path(FILE_PATH)
     if not p.exists():
-        raise FileNotFoundError(f"Missing file: {p}")
+        raise FileNotFoundError(f"Path not found: {p}")
 
-    log("[0] Launching Chrome…")
-    tmp_profile = tempfile.mkdtemp()
-    log(f"🧪 Using temporary Chrome profile: {tmp_profile}")
-
-    chrome_options = webdriver.ChromeOptions()
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--disable-extensions")
-    chrome_options.add_argument(f"--user-data-dir={tmp_profile}")
-    chrome_options.add_argument("--start-maximized")
-    chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    log("[0] Launching Chrome...")
+    opts = webdriver.ChromeOptions()
+    opts.add_argument("--start-maximized")
+    opts.add_argument("--disable-blink-features=AutomationControlled")
     if HEADLESS:
-        chrome_options.add_argument("--headless=new")
+        opts.add_argument("--headless=new")
 
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+    with tempfile.TemporaryDirectory() as tmpdirname:
+        log(f"\U0001f9ea Using temporary Chrome profile: {tmpdirname}")
+        opts.add_argument(f"--user-data-dir={tmpdirname}")
+        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=opts)
 
-    try:
-        goto_login(driver)
-        log("✅ Logged in successfully (if credentials are correct).")
-        driver.save_screenshot("login_success.png")
-        log("[📸] Screenshot saved: login_success.png")
-        log("🎉 Login stage completed successfully.")
-    except Exception as e:
-        log(f"❌ ERROR: {e}")
-        driver.save_screenshot("error_debug.png")
-        with open("error_debug.html", "w", encoding="utf-8") as f:
-            f.write(driver.page_source)
-        log("[📸] Saved error screenshot: error_debug.png")
-        log("[📄] Saved HTML source: error_debug.html")
-        raise
-    finally:
-        driver.quit()
+        try:
+            goto_login(driver)
+            click_upload(driver)
+            click_new(driver)
+
+            # Select doc type
+            force_select_appeal_letter(driver)
+            time.sleep(0.3)
+
+            # Comments
+            log("[5] Typing comments…")
+            cmt = find_any(driver, COMMENTS, timeout=25)
+            try: cmt.clear()
+            except: pass
+            cmt.send_keys(COMMENTS_TEXT)
+
+            # Attach file
+            log("[6] Attaching file…")
+            try:
+                addbtn = find_any(driver, ADD_ATTACH, timeout=6, clickable=True)
+                safe_click(driver, addbtn)
+                time.sleep(0.3)
+            except:
+                pass
+
+            finput = find_any(driver, FILE_INPUT, timeout=25)
+            finput.send_keys(str(p.resolve()))
+
+            # Submit
+            log("[7] Submitting…")
+            sub = find_any(driver, SUBMIT, timeout=25, clickable=True)
+            safe_click(driver, sub)
+
+            log("✅ Done.")
+        finally:
+            time.sleep(2)
+            driver.quit()
 
 if __name__ == "__main__":
     main()
