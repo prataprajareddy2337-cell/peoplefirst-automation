@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# PeopleFirst uploader — FINAL v5.3 (headless + verified login selectors)
+# PeopleFirst uploader — FINAL v5.4 (loginId fix + headless + GitHub-ready)
 
 from pathlib import Path
 import time
@@ -16,7 +16,7 @@ USERNAME = "2034844"
 PASSWORD = "Prataprajareddy@2338"
 
 # ------------------ 📄 File Path ------------------ #
-FILE_PATH = "AppealLetter.docx"  # file inside repo root
+FILE_PATH = "AppealLetter.docx"  # File must exist in repo root
 
 # ------------------ 🌐 Website Info ------------------ #
 URL_LOGIN = "https://peoplefirst.myflorida.com/peoplefirst/index.html"
@@ -30,19 +30,21 @@ CLICK_NEW_RETRIES = 10
 BLOCK_LAYER = (By.ID, "sap-ui-blocklayer-popup")
 BUSY_DIALOG = (By.CSS_SELECTOR, ".sapMBusyDialog")
 
-# ✅ Fixed based on your login screenshot
+# ✅ Updated selectors for latest login page (from your screenshot)
 LOGIN_USER = [
-    (By.ID, "userid"),
-    (By.NAME, "userid"),
+    (By.ID, "loginId"),
+    (By.NAME, "loginId"),
     (By.CSS_SELECTOR, "input[placeholder='Login ID']"),
     (By.XPATH, "//input[@placeholder='Login ID']"),
 ]
+
 LOGIN_PASS = [
     (By.ID, "password"),
     (By.NAME, "password"),
     (By.CSS_SELECTOR, "input[placeholder='Password']"),
     (By.XPATH, "//input[@placeholder='Password']"),
 ]
+
 LOGIN_BTN = [
     (By.XPATH, "//button[normalize-space(text())='Log In']"),
     (By.CSS_SELECTOR, "button[type='submit']"),
@@ -64,6 +66,7 @@ SUBMIT = [(By.XPATH, "//bdi[normalize-space(.)='Submit']/ancestor::*[self::butto
 def log(msg): print(msg, flush=True)
 
 def wait_clear(driver, timeout=60):
+    """Waits for UI blocking overlays to disappear"""
     end = time.time() + timeout
     while time.time() < end:
         try:
@@ -74,6 +77,7 @@ def wait_clear(driver, timeout=60):
     return False
 
 def find_any(driver, locator_list, timeout=25, clickable=False):
+    """Tries multiple selectors until one is found"""
     for by, sel in locator_list:
         try:
             if clickable:
@@ -86,14 +90,24 @@ def find_any(driver, locator_list, timeout=25, clickable=False):
     raise TimeoutException(f"No selector matched: {locator_list}")
 
 def safe_click(driver, el):
-    try: el.click(); return True
-    except (ElementClickInterceptedException, StaleElementReferenceException): pass
+    """Attempts multiple ways to click an element safely"""
+    try:
+        el.click()
+        return True
+    except (ElementClickInterceptedException, StaleElementReferenceException):
+        pass
     try:
         driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
-        time.sleep(0.1); el.click(); return True
-    except Exception: pass
-    try: driver.execute_script("arguments[0].click();", el); return True
-    except Exception: return False
+        time.sleep(0.1)
+        el.click()
+        return True
+    except Exception:
+        pass
+    try:
+        driver.execute_script("arguments[0].click();", el)
+        return True
+    except Exception:
+        return False
 
 # ------------------ 🚀 Main Workflow ------------------ #
 def goto_login(driver):
@@ -125,10 +139,11 @@ def click_new(driver):
         try:
             newb = find_any(driver, NEW_BUTTON, timeout=20)
         except TimeoutException:
-            log(f"  attempt {attempt}: New not found… retrying")
-            time.sleep(0.5); continue
+            log(f"  Attempt {attempt}: New not found, retrying…")
+            time.sleep(0.5)
+            continue
         if not safe_click(driver, newb):
-            log(f"  attempt {attempt}: click failed")
+            log(f"  Attempt {attempt}: click failed")
         time.sleep(1)
         try:
             _ = find_any(driver, FILE_INPUT, timeout=3)
