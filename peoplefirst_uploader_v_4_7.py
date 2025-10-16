@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-# PeopleFirst uploader — v5.3 (Final)
+# PeopleFirst uploader — v5.4 (Stable)
 # ✅ Works with https://peoplefirst.myflorida.com/peoplefirst/index.html
-# ✅ Waits for redirect/login form
-# ✅ Fixed login field detection
-# ✅ Avoids Chrome profile reuse errors
-# ✅ Saves screenshots for debugging
+# ✅ Waits up to 3 minutes for login form
+# ✅ Avoids Chrome session reuse error
+# ✅ Saves screenshots on error
+# ✅ Ready for local or GitHub Actions run
 
 from pathlib import Path
 import time, tempfile
@@ -13,7 +13,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, ElementClickInterceptedException, StaleElementReferenceException
+from selenium.common.exceptions import TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
 
 # ---------------- CONFIG ---------------- #
@@ -22,11 +22,11 @@ USERNAME = "2034844"
 PASSWORD = "Prataprajareddy@2338"
 COMMENTS_TEXT = "People First website has some issues. It has selected all the benefits without me selecting them for the new hire benefits."
 FILE_PATH = r"AppealLetter.docx"
-HEADLESS = True  # Set False to watch browser open
+HEADLESS = True  # Set False to view Chrome window
 CLICK_NEW_RETRIES = 10
 # ---------------------------------------- #
 
-# Locators (based on actual site)
+# Locators
 LOGIN_USER = [
     (By.ID, "loginId"),
     (By.XPATH, "//input[@placeholder='Login ID']"),
@@ -63,22 +63,9 @@ SUBMIT = [
     (By.XPATH, "//button[normalize-space(.)='Submit']")
 ]
 
+# Utility functions
 def log(msg):
     print(msg, flush=True)
-
-def wait_for_login_page(driver, timeout=60):
-    """Wait until the login fields appear (after redirect)."""
-    log("[1] Waiting for PeopleFirst login form to load…")
-    end = time.time() + timeout
-    while time.time() < end:
-        try:
-            if driver.find_elements(By.XPATH, "//input[@placeholder='Login ID']"):
-                log("[1] ✅ Login form detected.")
-                return True
-        except Exception:
-            pass
-        time.sleep(1)
-    raise TimeoutException("Login form did not appear in time.")
 
 def find_any(driver, locs, timeout=25, clickable=False):
     for by, sel in locs:
@@ -101,32 +88,42 @@ def safe_click(driver, el):
             time.sleep(0.2)
     return False
 
+# --- Main login wait ---
+def wait_for_login_page(driver, timeout=180):
+    """Wait up to 3 minutes for PeopleFirst login fields to appear."""
+    log(f"[1] Waiting for PeopleFirst login form to load… (timeout={timeout}s)")
+    end_time = time.time() + timeout
+    while time.time() < end_time:
+        try:
+            for by, sel in LOGIN_USER:
+                elements = driver.find_elements(by, sel)
+                if elements and elements[0].is_displayed():
+                    log("[1] ✅ Login form detected.")
+                    return
+        except Exception:
+            pass
+        time.sleep(1)
+
+    driver.save_screenshot("error_debug.png")
+    log("[📸] Saved error screenshot: error_debug.png")
+    raise TimeoutException("Login form did not appear in time.")
+
+# --- Main process ---
 def goto_login(driver):
     log("[1] Opening login page…")
     driver.get(URL_LOGIN)
+    time.sleep(10)  # give redirect time
     wait_for_login_page(driver)
+    log("[1] Typing credentials…")
     u = find_any(driver, LOGIN_USER, timeout=30)
     p = find_any(driver, LOGIN_PASS, timeout=20)
-    log("[1] Typing credentials…")
     u.clear(); u.send_keys(USERNAME)
     p.clear(); p.send_keys(PASSWORD)
-    btn = find_any(driver, LOGIN_BTN, timeout=20, clickable=True)
+    btn = find_any(driver, LOGIN_BTN, timeout=25, clickable=True)
     safe_click(driver, btn)
     log("[1] Login button clicked.")
 
-def wait_clear(driver, timeout=60):
-    end = time.time() + timeout
-    while time.time() < end:
-        try:
-            block = driver.find_elements(By.ID, "sap-ui-blocklayer-popup")
-            busy = driver.find_elements(By.CSS_SELECTOR, ".sapMBusyDialog")
-            if not any(e.is_displayed() for e in block + busy):
-                return True
-        except Exception:
-            pass
-        time.sleep(0.2)
-    return False
-
+# --- MAIN ---
 def main():
     p = Path(FILE_PATH)
     if not p.exists():
@@ -140,6 +137,7 @@ def main():
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--disable-extensions")
     chrome_options.add_argument(f"--user-data-dir={tmp_profile}")
     chrome_options.add_argument("--start-maximized")
     if HEADLESS:
@@ -150,10 +148,12 @@ def main():
     try:
         goto_login(driver)
         log("✅ Logged in successfully (if credentials are correct).")
-        time.sleep(2)
-        log("🎉 You can now add the upload flow after this step.")
         driver.save_screenshot("login_success.png")
         log("[📸] Screenshot saved: login_success.png")
+
+        # TODO: Add upload flow after successful login.
+        log("🎉 Login stage completed successfully.")
+
     except Exception as e:
         log(f"❌ ERROR: {e}")
         driver.save_screenshot("error_debug.png")
