@@ -35,14 +35,14 @@ BUSY_DIALOG = (By.CSS_SELECTOR, ".sapMBusyDialog")
 
 # ✅ Updated login selectors for current page
 LOGIN_USER = [
-    (By.ID, "j_username"),
-    (By.NAME, "j_username"),
+    (By.ID, "loginId"),
+    (By.NAME, "loginId"),
     (By.CSS_SELECTOR, "input[placeholder='Login ID']"),
     (By.XPATH, "//input[@placeholder='Login ID']"),
 ]
 LOGIN_PASS = [
-    (By.ID, "j_password"),
-    (By.NAME, "j_password"),
+    (By.ID, "password"),
+    (By.NAME, "password"),
     (By.CSS_SELECTOR, "input[placeholder='Password']"),
     (By.XPATH, "//input[@placeholder='Password']"),
 ]
@@ -225,3 +225,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
