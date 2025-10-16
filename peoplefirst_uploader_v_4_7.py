@@ -22,7 +22,7 @@ USERNAME = "2034844"
 PASSWORD = "Prataprajareddy@2338"
 
 COMMENTS_TEXT = "People First website has some issues. It has selected all the benefits without me selecting them for the new hire benefits."
-FILE_PATH = r"C:\Users\prata\Downloads\AppealLetter.docx"
+FILE_PATH = r"AppealLetter.docx"
 
 HEADLESS = False
 CLICK_NEW_RETRIES = 10
@@ -307,3 +307,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
