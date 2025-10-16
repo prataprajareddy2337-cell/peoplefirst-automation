@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-# PeopleFirst uploader — v5.0 (GitHub-ready + verified loginId fix + headless)
-# - Works in both local terminal and GitHub Actions
-# - Uses correct PeopleFirst field IDs (j_username, j_password)
-# - Uses AppealLetter.docx from repo folder (not Downloads)
-# - Headless Chrome for GitHub CI runs
+# PeopleFirst uploader — v4.7 (extra logging)
+# - Hard-coded credentials (as requested)
+# - Safe “Upload → New” clicks with overlay waits
+# - Forces Document Type to “APPEAL LETTER” using native <select> OR SAP UI5 API (no dropdown popups needed)
+# - Clear step-by-step prints so you see where it is
 
 from pathlib import Path
 import time, sys
@@ -22,29 +22,26 @@ USERNAME = "2034844"
 PASSWORD = "Prataprajareddy@2338"
 
 COMMENTS_TEXT = "People First website has some issues. It has selected all the benefits without me selecting them for the new hire benefits."
-FILE_PATH = "AppealLetter.docx"   # <── ✅ from repo root
+FILE_PATH = r"C:\Users\prata\Downloads\AppealLetter.docx"
 
-HEADLESS = True                   # ✅ True for GitHub Actions
+HEADLESS = False
 CLICK_NEW_RETRIES = 10
 
-# -------------------------------------------------------------
 # Locators
-# -------------------------------------------------------------
 BLOCK_LAYER = (By.ID, "sap-ui-blocklayer-popup")
 BUSY_DIALOG = (By.CSS_SELECTOR, ".sapMBusyDialog")
 
-# ✅ Updated login selectors for current page
 LOGIN_USER = [
-    (By.ID, "loginId"),
-    (By.NAME, "loginId"),
     (By.CSS_SELECTOR, "input[placeholder='Login ID']"),
-    (By.XPATH, "//input[@placeholder='Login ID']"),
+    (By.ID, "userid"),
+    (By.NAME, "userid"),
+    (By.XPATH, "//input[@type='text' and (contains(@aria-label,'Login') or contains(@placeholder,'Login'))]"),
 ]
 LOGIN_PASS = [
+    (By.CSS_SELECTOR, "input[placeholder='Password']"),
     (By.ID, "password"),
     (By.NAME, "password"),
-    (By.CSS_SELECTOR, "input[placeholder='Password']"),
-    (By.XPATH, "//input[@placeholder='Password']"),
+    (By.XPATH, "//input[@type='password']"),
 ]
 LOGIN_BTN = [
     (By.XPATH, "//button[normalize-space(.)='Log In']"),
@@ -61,6 +58,7 @@ NEW_BUTTON = [
     (By.XPATH, "//bdi[normalize-space(.)='New']/ancestor::*[self::button or self::span][1]"),
     (By.XPATH, "//button[contains(@id,'newButton') or @aria-label='New']"),
 ]
+
 COMMENTS = [
     (By.XPATH, "//textarea[contains(@placeholder,'Add comments') or contains(@id,'comment') or contains(@name,'comment')]"),
     (By.TAG_NAME, "textarea"),
@@ -72,10 +70,8 @@ SUBMIT = [
     (By.XPATH, "//button[.//bdi[normalize-space(.)='Submit'] or normalize-space(.)='Submit']"),
 ]
 
-# -------------------------------------------------------------
-# Helper Functions
-# -------------------------------------------------------------
-def log(msg): print(msg, flush=True)
+def log(msg):
+    print(msg, flush=True)
 
 def wait_clear(driver, timeout=60):
     end = time.time() + timeout
@@ -125,13 +121,10 @@ def safe_click(driver, el):
     except Exception:
         return False
 
-# -------------------------------------------------------------
-# Main Steps
-# -------------------------------------------------------------
 def goto_login(driver):
     log("[1] Opening login page…")
     driver.get(URL_LOGIN)
-    log("[1] Locating username and password fields…")
+    log("[1] Finding username & password fields…")
     u = find_any(driver, LOGIN_USER, timeout=30)
     p = find_any(driver, LOGIN_PASS, timeout=30)
     u.clear(); u.send_keys(USERNAME)
@@ -163,6 +156,7 @@ def click_new(driver):
         if not safe_click(driver, newb):
             log(f"    attempt {attempt}: click failed, retrying…")
         time.sleep(0.8)
+        # Form hint: file input present?
         try:
             _ = find_any(driver, FILE_INPUT, timeout=3)
             log("[3] New clicked; form visible.")
@@ -172,22 +166,103 @@ def click_new(driver):
             continue
     raise TimeoutException("Form did not appear after clicking New.")
 
-# -------------------------------------------------------------
-# MAIN ENTRY
-# -------------------------------------------------------------
+def force_select_appeal_letter(driver):
+    """
+    Select 'APPEAL LETTER' via:
+      1) native <select> by text or 2nd index
+      2) SAP UI5 control API by text or 2nd item
+    """
+    log("[4] Forcing Document Type = 'APPEAL LETTER' (native/UI5)…")
+    js = r"""
+    (function () {
+      const WANT = "APPEAL LETTER";
+
+      // (1) Native <select>
+      try {
+        const selects = document.querySelectorAll("select");
+        for (const s of selects) {
+          for (let i = 0; i < s.options.length; i++) {
+            const txt = (s.options[i].text || "").trim().toUpperCase();
+            if (txt === WANT) {
+              s.selectedIndex = i;
+              s.dispatchEvent(new Event("change", { bubbles: true }));
+              return "native-select-by-text";
+            }
+          }
+          if (s.options && s.options.length >= 2) {
+            s.selectedIndex = 1;
+            s.dispatchEvent(new Event("change", { bubbles: true }));
+            return "native-select-by-index";
+          }
+        }
+      } catch (e) {}
+
+      // (2) SAP UI5 control API
+      try {
+        if (window.sap && sap.ui && sap.ui.getCore) {
+          let input = document.querySelector("input[id$='doctypeCombo-inner'], input[aria-label='Document Type']");
+          if (!input) {
+            const label = Array.from(document.querySelectorAll("label"))
+              .find(l => (l.textContent || "").trim().toLowerCase() === "document type");
+            if (label) {
+              input = label.parentElement && label.parentElement.querySelector("input[role='combobox'], input.sapMComboBoxBaseInput");
+            }
+          }
+          if (input) {
+            let baseId = input.id ? input.id.replace(/-inner$/, "").replace(/-input$/, "") : null;
+            let ctrl = baseId ? sap.ui.getCore().byId(baseId) : null;
+            if (!ctrl) {
+              const cont = input.closest("[data-sap-ui], [id]");
+              if (cont && cont.id) ctrl = sap.ui.getCore().byId(cont.id);
+            }
+            if (ctrl && (ctrl.getItems || ctrl.getItemAt)) {
+              const items = ctrl.getItems ? ctrl.getItems() : [];
+              for (let i = 0; i < items.length; i++) {
+                const it = items[i];
+                const t = (it.getText ? it.getText() : (it.mProperties && it.mProperties.text) || "").trim().toUpperCase();
+                if (t === WANT) {
+                  if (ctrl.setSelectedItem) ctrl.setSelectedItem(it);
+                  if (ctrl.setSelectedKey && it.getKey) ctrl.setSelectedKey(it.getKey());
+                  if (ctrl.fireChange) ctrl.fireChange({ selectedItem: it });
+                  if (ctrl.fireSelectionChange) ctrl.fireSelectionChange({ selectedItem: it });
+                  if (ctrl.rerender) ctrl.rerender();
+                  return "ui5-combobox-by-text";
+                }
+              }
+              if (items.length >= 2) {
+                const it = items[1];
+                if (ctrl.setSelectedItem) ctrl.setSelectedItem(it);
+                if (ctrl.setSelectedKey && it.getKey) ctrl.setSelectedKey(it.getKey());
+                if (ctrl.fireChange) ctrl.fireChange({ selectedItem: it });
+                if (ctrl.fireSelectionChange) ctrl.fireSelectionChange({ selectedItem: it });
+                if (ctrl.rerender) ctrl.rerender();
+                return "ui5-combobox-by-index";
+              }
+            }
+          }
+        }
+      } catch (e) {}
+
+      return "not-found";
+    })();
+    """
+    result = driver.execute_script(js)
+    log(f"[4] Doc-Type mode: {result}")
+    if result == "not-found":
+      raise TimeoutException("Could not set Document Type via native/select or UI5 control.")
+    return result
+
 def main():
+    # quick preflight on file path
     p = Path(FILE_PATH)
     if not p.exists():
         raise FileNotFoundError(f"Path not found: {p}")
 
     log("[0] Launching Chrome…")
     opts = webdriver.ChromeOptions()
-    opts.add_argument("--window-size=1920,1080")
+    opts.add_argument("--start-maximized")
     if HEADLESS:
         opts.add_argument("--headless=new")
-        opts.add_argument("--no-sandbox")
-        opts.add_argument("--disable-dev-shm-usage")
-        opts.add_argument("--disable-gpu")
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=opts)
 
     try:
@@ -195,6 +270,11 @@ def main():
         click_upload(driver)
         click_new(driver)
 
+        # Document Type
+        force_select_appeal_letter(driver)
+        time.sleep(0.3)
+
+        # Comments
         log("[5] Typing comments…")
         cmt = find_any(driver, COMMENTS, timeout=25)
         try:
@@ -203,6 +283,7 @@ def main():
             pass
         cmt.send_keys(COMMENTS_TEXT)
 
+        # Attachment
         log("[6] Attaching file…")
         try:
             addbtn = find_any(driver, ADD_ATTACH, timeout=6, clickable=True)
@@ -213,6 +294,7 @@ def main():
         finput = find_any(driver, FILE_INPUT, timeout=25)
         finput.send_keys(str(p.resolve()))
 
+        # Submit
         log("[7] Submitting…")
         sub = find_any(driver, SUBMIT, timeout=25, clickable=True)
         safe_click(driver, sub)
@@ -225,4 +307,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
